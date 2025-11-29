@@ -1,0 +1,273 @@
+ГОТОВАЯ СТРУКТУРА ПРОЕКТА
+
+Создай проект:
+
+wp-dev-docker/
+    docker-compose.yml
+    .env
+    wordpress/           ← тут будет WordPress
+    plugins/             ← сюда кладёшь свои плагины (React блоки)
+    themes/              ← тут темы
+    config/              ← Внутри config/ создаём файл nginx.conf
+
+
+
+
+Создай папки:
+
+mkdir wp-dev-docker
+cd wp-dev-docker
+
+mkdir wordpress
+mkdir plugins
+mkdir themes
+
+🟦 1. ФАЙЛ .env
+
+Создай:
+
+# WordPress
+WORDPRESS_PORT=8080
+
+# Adminer
+ADMINER_PORT=8081
+
+# DB
+MYSQL_ROOT_PASSWORD=rootpass
+MYSQL_DATABASE=wordpress
+MYSQL_USER=wpuser
+MYSQL_PASSWORD=wppass
+
+# UID/GID текущего пользователя
+LOCAL_UID=1000
+LOCAL_GID=1000
+
+🟧 2. ФАЙЛ docker-compose.yml — ПРОФЕССИОНАЛЬНАЯ ВЕРСИЯ
+
+Вставь это:
+
+services:
+  wordpress:
+    image: wordpress:6.6-fpm
+    container_name: wp-dev
+    depends_on:
+      - db
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: ${MYSQL_USER}
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
+    volumes:
+      - ./wordpress:/var/www/html
+      - ./plugins:/var/www/html/wp-content/plugins
+      - ./themes:/var/www/html/wp-content/themes
+    user: "${LOCAL_UID}:${LOCAL_GID}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - wpnet
+
+  webserver:
+    image: nginx:latest
+    container_name: wp-nginx
+    depends_on:
+      - wordpress
+    ports:
+      - "${WORDPRESS_PORT}:80"
+    volumes:
+      - ./wordpress:/var/www/html
+      - ./plugins:/var/www/html/wp-content/plugins
+      - ./themes:/var/www/html/wp-content/themes
+      - ./config/nginx.conf:/etc/nginx/conf.d/default.conf
+    networks:
+      - wpnet
+
+  db:
+    image: mariadb:10.5
+    container_name: wp-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - wpnet
+
+  adminer:
+    image: adminer
+    container_name: wp-adminer
+    restart: always
+    ports:
+      - "${ADMINER_PORT}:8080"
+    networks:
+      - wpnet
+
+  wpcli:
+    image: wordpress:cli
+    container_name: wp-cli
+    depends_on:
+      - wordpress
+    user: "${LOCAL_UID}:${LOCAL_GID}"
+    volumes:
+      - ./wordpress:/var/www/html
+      - ./plugins:/var/www/html/wp-content/plugins
+      - ./themes:/var/www/html/wp-content/themes
+    entrypoint: ["wp"]
+    networks:
+      - wpnet
+
+volumes:
+  db_data:
+
+networks:
+  wpnet:
+
+🟩 3. nginx конфиг
+
+Создай:
+
+config/nginx.conf
+
+server {
+    listen 80;
+    server_name localhost;
+
+    root /var/www/html;
+    index index.php index.html;
+
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    location ~ \.php$ {
+        fastcgi_pass wordpress:9000;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param PATH_INFO $fastcgi_path_info;
+    }
+}
+
+🚀 4. ЗАПУСК
+
+В корне:
+
+docker compose up -d
+
+
+Открываешь:
+
+WordPress:
+
+👉 http://localhost:8080
+
+Adminer:
+
+👉 http://localhost:8081
+
+Server: db
+User: wpuser
+Pass: wppass
+
+🟪 5. WP-CLI в Docker
+
+Класс! Теперь WP-CLI работает как отдельный сервис:
+
+Например:
+docker compose run --rm wpcli plugin list
+
+
+Установка WordPress:
+
+docker compose run --rm wpcli core install \
+  --url=http://localhost:8080 \
+  --title="Dev WP" \
+  --admin_user=admin \
+  --admin_password=admin \
+  --admin_email=admin@example.com
+
+🟦 6. Папка для твоего Gutenberg плагина (React)
+
+Твой плагин должен располагаться здесь:
+
+wp-dev-docker/plugins/wp-gutenberg-slider/
+
+
+И WordPress его увидит без проблем с правами
+(потому что контейнер запускается от UID=1000/GID=1000).
+
+🟩 7. Доступ в контейнер WordPress
+docker compose exec wordpress bash
+
+
+И внутри ты будешь в:
+
+/var/www/html
+
+🟨 8. Node.js для разработки блоков
+
+Node внутри контейнера ставить не нужно!
+
+Нужно ставить Node.js на хосте:
+
+sudo apt install nodejs npm
+
+
+Дальше:
+
+cd plugins/wp-gutenberg-slider
+npm install
+npm run dev
+
+
+И файлы будут попадать в контейнер автоматически (volume mount).
+
+🎉 Готово!
+
+Ты получил идеальный Docker-стек для разработки Gutenberg блоков на React:
+
+нет проблем с правами
+
+работает WP-CLI
+
+есть Adminer
+
+есть nginx
+
+чистый PHP-FPM
+
+отдельная папка для твоих плагинов
+
+Node.js работает на хосте — без гемора
+
+======================================================
+!!!
+плюс для image 
+
+Решение пошагово
+1️⃣ Создаём папку uploads
+
+На хосте (в корне wordpress):
+
+mkdir -p wordpress/wp-content/uploads
+
+2️⃣ Даем правильного владельца (тот же, что в контейнере)
+sudo chown -R 1000:1000 wordpress/wp-content/uploads
+
+
+или если хочешь своим пользователем:
+
+chown -R $USER:$USER wordpress/wp-content/uploads
+
+3️⃣ Проверяем права
+chmod -R 775 wordpress/wp-content/uploads
+
+
+7 для владельца → чтение/запись/выполнение
+
+7 для группы → чтение/запись/выполнение
+
+5 для остальных → чтение/выполнение
